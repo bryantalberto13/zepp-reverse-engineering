@@ -36,3 +36,14 @@ data class HeartRateReading(
     val isContactDetected: Boolean = true,
     val timestamp: Long = System.currentTimeMillis()
 )
+
+data class MinuteActivityRecord(
+    val timestamp: Long,
+    val kind: Int,
+    val intensity: Int,
+    val steps: Int,
+    val heartRate: Int,
+    val isAsleep: Boolean,
+    val isDeepSleep: Boolean,
+    val isRemSleep: Boolean
+)
