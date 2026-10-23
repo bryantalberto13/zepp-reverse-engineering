@@ -3,6 +3,7 @@
 CLI utility to parse raw hex payloads from Zepp / Amazfit BLE characteristics.
 Supports:
   - Realtime steps / calories / distance (Characteristic 0x0007)
+  - 8-byte minute activity samples (Bulk Fetch 0x0005)
   - Battery status (Characteristic 0x0006)
   - Heart rate measurement (Characteristic 0x2A37)
 """
@@ -27,6 +28,24 @@ def parse_steps(hex_str: str):
     print(f"  Steps:      {steps:,}")
     print(f"  Distance:   {distance:,} meters ({(distance / 1000.0):.2f} km)")
     print(f"  Calories:   {calories:,} kcal")
+
+def parse_activity_sample(hex_str: str):
+    clean = hex_str.replace(" ", "").replace("0x", "")
+    data = bytes.fromhex(clean)
+    if len(data) < 8:
+        print("[!] Error: Activity sample must be at least 8 bytes")
+        return
+
+    kind, intensity, steps, hr, retain, sleep, deep_sleep, rem_sleep = struct.unpack("8B", data[:8])
+    print("--- [Historical Minute Activity Sample (0x0005)] ---")
+    print(f"  Raw Hex:     {clean[:16].upper()}")
+    print(f"  Category:    {kind}")
+    print(f"  Intensity:   {intensity}")
+    print(f"  Steps:       {steps}")
+    print(f"  Heart Rate:  {hr if hr != 0xFF else 'Off-wrist'} BPM")
+    print(f"  Sleep State: {'Asleep' if sleep else 'Awake'}")
+    print(f"  Deep Sleep:  {'YES' if deep_sleep else 'NO'}")
+    print(f"  REM Sleep:   {'YES' if rem_sleep else 'NO'}")
 
 def parse_battery(hex_str: str):
     clean = hex_str.replace(" ", "").replace("0x", "")
@@ -74,17 +93,20 @@ def parse_hr(hex_str: str):
 def main():
     parser = argparse.ArgumentParser(description="Parse Amazfit/Zepp BLE Telemetry Packets")
     parser.add_argument("--steps", help="Hex string from characteristic 0x0007")
+    parser.add_argument("--activity-sample", help="8-byte hex string from characteristic 0x0005")
     parser.add_argument("--battery", help="Hex string from characteristic 0x0006")
     parser.add_argument("--hr", help="Hex string from characteristic 0x2A37")
 
     args = parser.parse_args()
     if args.steps:
         parse_steps(args.steps)
+    if args.activity_sample:
+        parse_activity_sample(args.activity_sample)
     if args.battery:
         parse_battery(args.battery)
     if args.hr:
         parse_hr(args.hr)
-    if not (args.steps or args.battery or args.hr):
+    if not (args.steps or args.activity_sample or args.battery or args.hr):
         parser.print_help()
 
 if __name__ == "__main__":

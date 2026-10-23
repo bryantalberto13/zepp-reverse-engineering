@@ -7,13 +7,13 @@
 
 A dedicated, comprehensive reverse-engineering repository documenting the proprietary Bluetooth Low Energy (BLE) protocols, cryptographic handshakes, telemetry streams, chunk synchronization engines, and cloud endpoints of the **Zepp Android application** (`com.huami.watch.hmwatchmanager`) and **Amazfit wearables** (with focus on **Amazfit Balance / Monaco** and Zepp OS devices).
 
-This repository is structured specifically to serve as a ground-truth protocol specification and drop-in code reference for building custom Android companion applications (e.g., in **Gemini Studio / Google AI Studio** and **Android Studio**).
+Cross-referenced against official APK decompilations and active open-source client implementations (`MyrikLD/amazfit_pyclient`).
 
 ---
 
 ## 📑 Table of Contents
 
-1. [Architecture Overview](#-architecture-overview)
+1. [Architecture Overview: Dual-Mode Stack](#-architecture-overview-dual-mode-stack)
 2. [Target Hardware & Identifiers](#-target-hardware--identifiers)
 3. [Repository Structure](#-repository-structure)
 4. [Protocol Documentation Map](#-protocol-documentation-map)
@@ -23,9 +23,9 @@ This repository is structured specifically to serve as a ground-truth protocol s
 
 ---
 
-## 📡 Architecture Overview
+## 📡 Architecture Overview: Dual-Mode Stack
 
-The Zepp companion architecture communicates with Amazfit smartwatches over standard Bluetooth Low Energy (BLE), utilizing Huami's proprietary 128-bit GATT profile alongside standard Bluetooth SIG profiles:
+Modern Amazfit smartwatches (Amazfit Balance, GTR 4, GTS 4, Cheetah, T-Rex Ultra) running **Zepp OS** expose a **Dual-Mode Stack**:
 
 ```
 +----------------------------------------------------------------------+
@@ -35,22 +35,24 @@ The Zepp companion architecture communicates with Amazfit smartwatches over stan
        |                                                |
        |  BLE Central (MTU: 512)                        |  HTTPS REST
        v                                                v
-+-----------------------------+        +-------------------------------+
-|    Amazfit Balance Watch    |        |        Zepp / Huami Cloud     |
-|         (Zepp OS)           |        |           REST APIs           |
-+-----------------------------+        +-------------------------------+
-| * Auth Service (0xFEE1)     |        | * account.huami.com (Login)   |
-| * Base Service (0xFEE0)     |        | * api-mifit.huami.com (Keys)  |
-| * Bulk Transfer (0xFEE7)    |        | * api-user.huami.com (Tokens) |
-| * Standard HR (0x180D)      |        +-------------------------------+
-| * Battery (0x180F)          |
-+-----------------------------+
++-------------------------------------------------+   +-------------------------------+
+|              Amazfit Balance Watch              |   |        Zepp / Huami Cloud     |
+|                   (Zepp OS)                     |   |           REST APIs           |
++-------------------------------------------------+   +-------------------------------+
+| [A] Modern Chunked Multiplexed Transport        |   | * account.huami.com (Login)   |
+|     * TX: 0x0016 / RX: 0x0017                   |   | * api-mifit.huami.com (Keys)  |
+|     * ECDH Handshake (SECT163R2) -> AES Session |   | * api-user.huami.com (Tokens) |
+|     * Endpoints: STEPS, WORKOUT, WEATHER, JS... |   +-------------------------------+
+|                                                 |
+| [B] Direct Telemetry & Bulk Sync Layer          |
+|     * Auth Handshake (0x0009 - AES-128-ECB)     |
+|     * Realtime Activity (0x0007 - Steps/Cal)    |
+|     * Battery Status (0x0006 - Level/Charge)    |
+|     * Bulk Metadata (0x0004 - Start/Ack)        |
+|     * Bulk Data Stream (0x0005 - 8B Min Samples)|
+|     * Standard PPG Heart Rate (0x180D / 0x2A37) |
++-------------------------------------------------+
 ```
-
-### Protocol Highlights
-* **Cryptographic Handshake:** Mutual challenge-response authentication using **AES-128 (ECB mode, NoPadding)** over Characteristic `00000009-0000-3512-2118-0009af100700`.
-* **Real-time Telemetry:** Unencrypted, asynchronous byte streams pushed via notifications for real-time steps, distance, active calories (`00000007-...`), and battery percentage (`00000006-...`).
-* **Bulk Data Streaming:** Reliable, chunk-oriented protocol over Service `0xFEE7` for synchronizing historical minute-by-minute activity, sleep epochs, continuous heart rate, and GPS track logs.
 
 ---
 
@@ -81,21 +83,22 @@ zepp-reverse-engineering/
 │   ├── 01-ble-architecture.md              # GATT Services, Characteristics, Descriptors, MTU
 │   ├── 02-authentication-handshake.md     # AES-128 challenge-response & pairing sequence
 │   ├── 03-realtime-telemetry-protocol.md   # Step counter, distance, calorie & battery parsing
-│   ├── 04-sync-and-chunk-protocol.md       # High-throughput historical activity & workout sync
+│   ├── 04-sync-and-chunk-protocol.md       # High-throughput historical 8B activity sync
 │   ├── 05-device-hardware-matrix.md        # Huami/Zepp device codenames & internal IDs
-│   └── 06-cloud-api-endpoints.md           # Huami Cloud REST APIs (Auth, Keys, Sync)
+│   ├── 06-cloud-api-endpoints.md           # Huami Cloud REST APIs (Auth, Keys, Sync)
+│   └── 07-chunked-endpoint-protocol.md     # Modern Zepp OS Chunked Transport & ECDH
 ├── code-reference/                         # Production-ready implementation snippets
 │   └── android-kotlin/                     # Clean Kotlin code ready for Android Studio
 │       ├── AmazfitConstants.kt             # Protocol UUIDs, opcodes, and regex constants
 │       ├── AmazfitCrypto.kt                # AES-128 challenge encryption and key generator
 │       ├── BleScanner.kt                   # Low-latency BLE discovery with hardware filtering
 │       ├── BleConnectionManager.kt         # Reactive GATT connection & auth state machine
-│       ├── TelemetryParser.kt              # Byte-level parsers for steps, battery, and HR
+│       ├── TelemetryParser.kt              # Byte-level parsers for steps, battery, HR, 8B samples
 │       └── models/
 │           └── Models.kt                   # Data models (AuthState, RealtimeActivity, etc.)
 └── tools/                                  # Local verification scripts (Python)
     ├── verify_auth_crypto.py               # AES-128 ECB challenge-response test vector validator
-    ├── parse_telemetry.py                  # CLI decoder for raw hex packets
+    ├── parse_telemetry.py                  # CLI decoder for raw hex packets & 8B samples
     └── ble_inspect.py                      # Bleak-based BLE service inspection utility
 ```
 
@@ -103,63 +106,33 @@ zepp-reverse-engineering/
 
 ## 📖 Protocol Documentation Map
 
-Read the detailed technical documents under `/docs/`:
-
-1. [**`docs/01-ble-architecture.md`**](docs/01-ble-architecture.md): Complete catalog of primary and secondary GATT services, characteristic handles, read/write/notify access masks, and Client Characteristic Configuration Descriptors (CCCD `0x2902`).
-2. [**`docs/02-authentication-handshake.md`**](docs/02-authentication-handshake.md): Step-by-step cryptographic sequence diagram showing initial pairing (`0x01`), random challenge retrieval (`0x02`), AES-128-ECB challenge transformation, and response verification (`0x03`). Includes guide on obtaining the 16-byte Auth Key without rooting.
-3. [**`docs/03-realtime-telemetry-protocol.md`**](docs/03-realtime-telemetry-protocol.md): Byte layouts, little-endian binary decoding, scaling factors, and update frequencies for real-time steps, active calories, distance, battery percentage, charging state, and heart rate.
-4. [**`docs/04-sync-and-chunk-protocol.md`**](docs/04-sync-and-chunk-protocol.md): Analysis of the bulk sync engine (`0xFEE7`), chunk sequencing, timestamp headers, minute-by-minute activity payloads (`ActivityJob`), sleep stages, and workout sessions.
+1. [**`docs/01-ble-architecture.md`**](docs/01-ble-architecture.md): Complete catalog of primary and secondary GATT services, handles, permissions, and MTU 512 negotiation.
+2. [**`docs/02-authentication-handshake.md`**](docs/02-authentication-handshake.md): Step-by-step cryptographic sequence diagram showing initial pairing (`0x01`), challenge retrieval (`0x02`), AES-128-ECB challenge transformation, and response verification (`0x03`).
+3. [**`docs/03-realtime-telemetry-protocol.md`**](docs/03-realtime-telemetry-protocol.md): Byte layouts, little-endian binary decoding, scaling factors, and update frequencies for real-time steps, active calories, distance, battery, and PPG heart rate.
+4. [**`docs/04-sync-and-chunk-protocol.md`**](docs/04-sync-and-chunk-protocol.md): Analysis of the bulk sync engine (`0x0004` & `0x0005`), `FetchType` catalog, 15-minute timezone encoding, 8-byte minute sample records (`ActivitySample`), and ACK modes (`0x09` keep vs `0x01` clear).
 5. [**`docs/05-device-hardware-matrix.md`**](docs/05-device-hardware-matrix.md): Exhaustive table of Huami device models, internal code numbers, hardware generation tags, and BLE advertising signatures.
 6. [**`docs/06-cloud-api-endpoints.md`**](docs/06-cloud-api-endpoints.md): REST endpoints for Huami login, app token retrieval, and automated AuthKey recovery from the official cloud backend.
-
----
-
-## 🤖 Quick Implementation Guide for Android / Gemini Studio
-
-If you are developing a companion Android application in **Gemini Studio (Google AI Studio)**:
-
-1. **Feed Context:** Attach or reference [gemini-studio-prompt.md](gemini-studio-prompt.md) along with `docs/01-ble-architecture.md` and `docs/02-authentication-handshake.md`.
-2. **Import Reference Code:** Drop the files from `code-reference/android-kotlin/` directly into your Android project package (e.g. `com.yourname.companion.data.ble`).
-3. **Connect & Pair:**
-   ```kotlin
-   val manager = BleConnectionManager(context)
-   
-   // If connecting with an existing 16-byte hex Auth Key:
-   manager.connectAndAuthenticate(
-       address = "XX:XX:XX:XX:XX:XX",
-       authKeyHex = "0123456789ABCDEF0123456789ABCDEF",
-       isNewPairing = false
-   )
-   
-   // Collect state reactively
-   lifecycleScope.launch {
-       manager.authState.collect { state ->
-           when (state) {
-               is AuthState.Authenticated -> println("Paired and ready!")
-               is AuthState.Failed -> println("Auth failed: ${state.error}")
-               else -> println("Current status: $state")
-           }
-       }
-   }
-   ```
+7. [**`docs/07-chunked-endpoint-protocol.md`**](docs/07-chunked-endpoint-protocol.md): Modern Zepp OS multiplexed framing protocol on `0x0016`/`0x0017`, `SECT163R2` ECDH key exchange, dynamic XOR message keys, and endpoint tables.
 
 ---
 
 ## 🛠 Testing & Verification Tools
 
-The `tools/` directory includes Python utilities to verify protocol compatibility on desktop/Linux without needing an Android device:
-
 ```bash
 # Verify AES-128 challenge encryption against known test vectors
 python3 tools/verify_auth_crypto.py
 
-# Decode sample telemetry hex packets
+# Decode sample realtime telemetry hex packet
 python3 tools/parse_telemetry.py --steps "E8030000B004000014000000"
 # Output: Steps: 1,000 | Distance: 1,200 m | Calories: 20 kcal
+
+# Decode sample historical minute activity sample (8 bytes)
+python3 tools/parse_telemetry.py --activity-sample "01141E4800010100"
+# Output: Category: 1 | Intensity: 20 | Steps: 30 | Heart Rate: 72 BPM | Asleep: YES | Deep: YES
 ```
 
 ---
 
 ## ⚠️ Disclaimer
 
-This project is created strictly for educational, research, and interoperability purposes under fair use. All product names, logos, and brands (Zepp, Amazfit, Huami, Monaco) are property of their respective owners. This repository is not affiliated with, sponsored by, or endorsed by Zepp Health Corp. or Huami Inc.
+This project is created strictly for educational, research, and interoperability purposes under fair use. All product names, logos, and brands (Zepp, Amazfit, Huami, Monaco) are property of their respective owners.

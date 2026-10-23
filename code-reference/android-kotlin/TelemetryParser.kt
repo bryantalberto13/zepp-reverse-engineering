@@ -6,6 +6,16 @@ import org.openbalance.data.ble.model.RealtimeActivity
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+data class ActivityMinuteSample(
+    val kind: Int,
+    val intensity: Int,
+    val steps: Int,
+    val heartRate: Int,
+    val isAsleep: Boolean,
+    val isDeepSleep: Boolean,
+    val isRemSleep: Boolean
+)
+
 object TelemetryParser {
 
     /**
@@ -24,6 +34,33 @@ object TelemetryParser {
             steps = steps,
             distanceMeters = distance,
             calories = calories
+        )
+    }
+
+    /**
+     * Parses an 8-byte minute activity sample from Bulk Sync (FetchType.ACTIVITY 0x01).
+     * Structure: [kind, intensity, steps, heart_rate, retain, sleep, deep_sleep, rem_sleep]
+     */
+    fun parseMinuteSample(data: ByteArray, offset: Int = 0): ActivityMinuteSample {
+        require(data.size - offset >= 8) { "Data buffer must contain at least 8 bytes from offset" }
+
+        val kind = data[offset].toInt() and 0xFF
+        val intensity = data[offset + 1].toInt() and 0xFF
+        val steps = data[offset + 2].toInt() and 0xFF
+        val hr = data[offset + 3].toInt() and 0xFF
+        // offset + 4 is retain/flags
+        val sleep = (data[offset + 5].toInt() and 0xFF) == 1
+        val deepSleep = (data[offset + 6].toInt() and 0xFF) == 1
+        val remSleep = (data[offset + 7].toInt() and 0xFF) == 1
+
+        return ActivityMinuteSample(
+            kind = kind,
+            intensity = intensity,
+            steps = steps,
+            heartRate = if (hr == 0xFF) 0 else hr,
+            isAsleep = sleep,
+            isDeepSleep = deepSleep,
+            isRemSleep = remSleep
         )
     }
 
